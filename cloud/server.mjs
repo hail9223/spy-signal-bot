@@ -217,9 +217,13 @@ async function runSignalCheck() {
   const qty  = Math.min(50, Math.max(1, Math.floor(cash / sig.premium)));
   const deployed = qty * sig.premium;
 
-  const scaleLines = [1,2,3,4,5].map(l =>
+  const scaleLevels = qty < 5 ? [2, 5] : [1, 2, 3, 4, 5];
+  const scaleLines = scaleLevels.map(l =>
     `  +${l*10}% → sell when premium hits $${(sig.premium*(1+l*0.10)).toFixed(2)}`
   ).join('\n');
+  const scaleNote = qty < 5
+    ? `Scale-out targets (sell 1 contract each):`
+    : `Scale-out targets (10% each):`;
 
   await sendTelegram([
     `📊 <b>SPY 0DTE SIGNAL — ${dateStr} ${timeStr} ET</b>`,
@@ -231,7 +235,7 @@ async function runSignalCheck() {
     `<b>Size ($${acct} account, ${(pct*100).toFixed(0)}% alloc):</b>`,
     `  → <b>${qty} contracts</b> = $${deployed.toFixed(2)} deployed`,
     ``,
-    `<b>Scale-out targets (10% each):</b>`,
+    `<b>${scaleNote}</b>`,
     scaleLines,
     ``,
     `⏰ Expires 4pm ET`,
