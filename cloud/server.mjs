@@ -442,6 +442,111 @@ app.get('/set-webhook', async (req, res) => {
 
 app.listen(PORT, () => console.log(`Bot server running on port ${PORT}`));
 
+// ── Morning Brief ─────────────────────────────────────────────────────────────
+
+function fetchJSON(url) {
+  return new Promise((resolve, reject) => {
+    const opts = { headers: { 'User-Agent': 'Mozilla/5.0' } };
+    https.get(url, opts, res => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => { try { resolve(JSON.parse(data)); } catch(e) { reject(e); } });
+    }).on('error', reject);
+  });
+}
+
+async function runMorningBrief() {
+  try {
+    console.log('Running morning brief...');
+
+    // Fetch small cap gainers and most actives from Yahoo Finance screener
+    const [gainersRes, activesRes] = await Promise.all([
+      fetchJSON('https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved?formatted=false&lang=en-US&region=US&scrIds=small_cap_gainers&start=0&count=50'),
+      fetchJSON('https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved?formatted=false&lang=en-US&region=US&scrIds=most_actives&start=0&count=50'),
+    ]);
+
+    const gainers = gainersRes?.finance?.result?.[0]?.quotes || [];
+    const actives = activesRes?.finance?.result?.[0]?.quotes || [];
+
+    // Combine, deduplicate, filter under $15, sort by % gain
+    const seen = new Set();
+    const candidates = [...gainers, ...actives]
+      .filter(q => {
+        if (seen.has(q.symbol)) return false;
+        seen.add(q.symbol);
+        const p = q.regularMarketPrice;
+        return p && p > 0.10 && p < 15;
+      })
+      .sort((a, b) => (b.regularMarketChangePercent || 0) - (a.regularMarketChangePercent || 0))
+      .slice(0, 5);
+
+    if (candidates.length === 0) {
+      await sendTelegram('🌅 Morning Brief: No strong runners under $15 found today.');
+      return;
+    }
+
+    // Fetch latest news headline for each ticker
+    const withNews = await Promise.all(candidates.map(async q => {
+      try {
+        const r = await fetchJSON(`https://query1.finance.yahoo.com/v1/finance/search?q=${q.symbol}&newsCount=1&enableFuzzyQuery=false`);
+        return { ...q, headline: r?.news?.[0]?.title || 'No recent news' };
+      } catch { return { ...q, headline: 'No recent news' }; }
+    }));
+
+    // Build Telegram message
+    const emojis = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣'];
+    const dateStr = new Date().toLocaleDateString('en-US', {
+      weekday:'long', month:'long', day:'numeric', year:'numeric', timeZone:'America/New_York'
+    });
+
+    const lines = [
+      `🌅 MORNING BRIEF — ${dateStr}`,
+      ``,
+      `📋 TOP 5 RUNNERS UNDER $15`,
+      `Squeeze Potential + News Catalyst`,
+      ``,
+    ];
+
+    withNews.forEach((q, i) => {
+      const price  = q.regularMarketPrice?.toFixed(2) || '?';
+      const pct    = (q.regularMarketChangePercent || 0).toFixed(1);
+      const vol    = q.regularMarketVolume >= 1e6
+        ? (q.regularMarketVolume / 1e6).toFixed(1) + 'M'
+        : q.regularMarketVolume >= 1e3
+          ? (q.regularMarketVolume / 1e3).toFixed(0) + 'K' : (q.regularMarketVolume || 0).toString();
+      const mcap   = q.marketCap ? '$' + (q.marketCap / 1e6).toFixed(0) + 'M mkt cap' : 'micro-cap';
+      const tag    = parseFloat(pct) >= 20 ? '🔥 Squeeze Pick' : '⚡ Squeeze Watch';
+      const name   = q.shortName || q.longName || q.symbol;
+
+      lines.push(`━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+      lines.push(`${emojis[i]} ${q.symbol} — ${name}`);
+      lines.push(`💲 ~$${price}  |  ${tag}`);
+      lines.push(``);
+      lines.push(`📰 ${q.headline}`);
+      lines.push(`📈 +${pct}% today  |  Vol: ${vol}`);
+      lines.push(`⚡ ${mcap} — small float = big move potential`);
+      lines.push(`⚠️ High volatility — confirm volume before entry`);
+      lines.push(``);
+    });
+
+    lines.push(`━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+    lines.push(`📌 RULES FOR THESE PLAYS:`);
+    lines.push(`• Watch first 15–30 min for direction`);
+    lines.push(`• Only enter if volume confirms move`);
+    lines.push(`• Set a hard stop — these move FAST both ways`);
+    lines.push(`• Never risk more than you can afford to lose 100%`);
+    lines.push(``);
+    lines.push(`🕙 Market opens 9:30am ET`);
+    lines.push(`Good luck today! 🚀`);
+
+    await sendTelegram(lines.join('\n'));
+    console.log('Morning brief sent.');
+  } catch(e) {
+    console.error('Morning brief error:', e.message);
+    await sendTelegram(`⚠️ Morning brief error: ${e.message}`);
+  }
+}
+
 // ── Scheduled signal checks ───────────────────────────────────────────────────
 // 9:30am ET = 13:30 UTC (EDT), then every 30min until 1:30pm ET = 17:30 UTC
 // Cron: at :30 of hour 13, then :00 and :30 of hours 14-17, Mon-Fri
@@ -449,4 +554,10 @@ app.listen(PORT, () => console.log(`Bot server running on port ${PORT}`));
 cron.schedule('30 13 * * 1-5', runSignalCheck, { timezone: 'UTC' }); // 9:30am ET
 cron.schedule('0,30 14-17 * * 1-5', runSignalCheck, { timezone: 'UTC' }); // 10am-1:30pm ET
 
-console.log('Scheduler started — signal checks: 9:30am–1:30pm ET, Mon–Fri');
+// ── Morning Brief schedule ────────────────────────────────────────────────────
+// 8:00am ET = 12:00 UTC (EDT, UTC-4)
+// 8:30am ET = 12:30 UTC
+cron.schedule('0 12 * * 1-5',  runMorningBrief, { timezone: 'UTC' }); // 8:00am ET
+cron.schedule('30 12 * * 1-5', runMorningBrief, { timezone: 'UTC' }); // 8:30am ET
+
+console.log('Scheduler started — signal checks: 9:30am–1:30pm ET | morning brief: 8am & 8:30am ET, Mon–Fri');
