@@ -1,0 +1,325 @@
+//@version=5
+strategy(
+  title        = "AMC 5m — IQ Candles + Divergence IQ + RSI + BB",
+  shorttitle   = "AMC·IQC+DIV+RSI+BB",
+  overlay      = true,
+  initial_capital      = 10000,
+  default_qty_type     = strategy.cash,   // overridden per-entry with tiered sizing
+  default_qty_value    = 10000,
+  commission_type      = strategy.commission.percent,
+  commission_value     = 0.1,
+  slippage             = 2,
+  max_bars_back        = 5000
+)
+
+// ── Guard: warn if not on AMC 5m ─────────────────────────────────────────────
+var bool wrong_ticker    = syminfo.ticker != "AMC"
+var bool wrong_timeframe = timeframe.period != "5"
+if wrong_ticker or wrong_timeframe
+    label.new(bar_index, high,
+        "⚠ Strategy is tuned for AMC on 5m\nCurrent: " + syminfo.ticker + " / " + timeframe.period + "m",
+        color=color.new(color.red, 0), textcolor=color.white,
+        style=label.style_label_down, size=size.normal)
+
+// ─────────────────────────────────────────────
+//  INPUTS
+// ─────────────────────────────────────────────
+
+// IQ Candles proxy (EMA-based momentum colouring — mirrors how IQ Candles works)
+iq_fast     = input.int(9,  "IQ Candles Fast EMA",  group="IQ Candles (Proxy)")
+iq_slow     = input.int(21, "IQ Candles Slow EMA",  group="IQ Candles (Proxy)")
+iq_confirm  = input.int(3,  "Consecutive candles to confirm flip", group="IQ Candles (Proxy)", minval=1, maxval=5)
+
+// Divergence IQ proxy (RSI divergence vs price)
+div_rsi_len  = input.int(14, "Divergence RSI Length",  group="Divergence IQ (Proxy)")
+div_lookback = input.int(5,  "Divergence Lookback Bars", group="Divergence IQ (Proxy)", minval=3, maxval=20,
+     tooltip="How many bars back to check for swing highs/lows when detecting divergence")
+
+// RSI
+rsi_len     = input.int(14, "RSI Length",     group="RSI")
+rsi_ob      = input.int(70, "Overbought",     group="RSI")
+rsi_os      = input.int(30, "Oversold",       group="RSI")
+rsi_max_buy = input.int(70, "Max RSI to BUY", group="RSI", tooltip="Won't buy if RSI is above this")
+
+// Bollinger Bands
+bb_len      = input.int(20,  "BB Length",    group="Bollinger Bands")
+bb_mult     = input.float(2.0,"BB StdDev",   group="Bollinger Bands", step=0.1)
+
+// Trailing Stop
+trail_activate = input.float(5.0, "Trailing stop activates at profit %", group="Risk Management", step=0.5)
+trail_percent  = input.float(3.0, "Trail distance %",                     group="Risk Management", step=0.5)
+
+// Score threshold
+min_score   = input.int(6, "Minimum signal score to enter (0-10)", group="Signal Filter", minval=1, maxval=10)
+
+// ─────────────────────────────────────────────
+//  INDICATOR CALCULATIONS
+// ─────────────────────────────────────────────
+
+// IQ Candles Proxy — fast/slow EMA crossover determines candle colour
+ema_fast    = ta.ema(close, iq_fast)
+ema_slow    = ta.ema(close, iq_slow)
+iq_bull     = ema_fast > ema_slow  // true = bullish candle
+iq_bear     = ema_fast < ema_slow  // true = bearish candle
+
+// Count consecutive bullish / bearish candles
+var int bull_streak = 0
+var int bear_streak = 0
+if iq_bull
+    bull_streak := bull_streak + 1
+    bear_streak := 0
+else
+    bear_streak := bear_streak + 1
+    bull_streak := 0
+
+iq_flip_bull = iq_bull and not iq_bull[1]   // just flipped bullish
+iq_flip_bear = iq_bear and not iq_bear[1]   // just flipped bearish
+iq_strong_bull = bull_streak >= iq_confirm
+iq_strong_bear = bear_streak >= iq_confirm
+
+// RSI
+rsi         = ta.rsi(close, rsi_len)
+
+// Bollinger Bands
+[bb_mid, bb_upper, bb_lower] = ta.bb(close, bb_len, bb_mult)
+bb_width    = bb_upper - bb_lower
+bb_squeeze  = bb_width < bb_width[20] * 0.85   // bands narrower than recent avg = squeeze
+
+at_lower_bb = close <= bb_lower * 1.01          // within 1% of lower band
+at_upper_bb = close >= bb_upper * 0.99          // within 1% of upper band
+cross_mid_up   = ta.crossover(close,  bb_mid)
+cross_mid_down = ta.crossunder(close, bb_mid)
+
+// ─────────────────────────────────────────────
+//  DIVERGENCE IQ PROXY
+//  Bullish divergence: price makes lower low, RSI makes higher low  → buy signal
+//  Bearish divergence: price makes higher high, RSI makes lower high → sell signal
+// ─────────────────────────────────────────────
+
+div_rsi = ta.rsi(close, div_rsi_len)
+
+// Swing lows/highs using the lookback window
+price_low_now  = ta.lowest(close, div_lookback)
+price_low_prev = ta.lowest(close, div_lookback)[div_lookback]
+rsi_low_now    = ta.lowest(div_rsi, div_lookback)
+rsi_low_prev   = ta.lowest(div_rsi, div_lookback)[div_lookback]
+
+price_high_now  = ta.highest(close, div_lookback)
+price_high_prev = ta.highest(close, div_lookback)[div_lookback]
+rsi_high_now    = ta.highest(div_rsi, div_lookback)
+rsi_high_prev   = ta.highest(div_rsi, div_lookback)[div_lookback]
+
+// Bullish divergence: price lower low + RSI higher low
+bull_div = price_low_now < price_low_prev and rsi_low_now > rsi_low_prev
+// Hidden bullish divergence (trend continuation): price higher low + RSI lower low
+hidden_bull_div = price_low_now > price_low_prev and rsi_low_now < rsi_low_prev
+
+// Bearish divergence: price higher high + RSI lower high
+bear_div = price_high_now > price_high_prev and rsi_high_now < rsi_high_prev
+// Hidden bearish divergence (trend continuation): price lower high + RSI higher high
+hidden_bear_div = price_high_now < price_high_prev and rsi_high_now > rsi_high_prev
+
+// Summary signals
+div_bull_signal = bull_div or hidden_bull_div
+div_bear_signal = bear_div or hidden_bear_div
+
+// Divergence status string for table
+div_status = div_bull_signal and div_bear_signal ? "MIXED" :
+             div_bull_signal ? "BULL DIV" :
+             div_bear_signal ? "BEAR DIV" : "NONE"
+
+// ─────────────────────────────────────────────
+//  SIGNAL SCORING  (mirrors rules.json)
+//
+//  Weight targets (positive side):
+//    IQ Candles  — flip +4, streak +2  → max +6
+//    Divergence IQ — div +2, confirm +1 → max +3  (≈ half of IQ Candles)
+// ─────────────────────────────────────────────
+
+// BUY score
+buy_score = 0
+// IQ Candles (weight: 6 pts max)
+buy_score := buy_score + (iq_flip_bull   ? 4 : 0)   // IQ flip bullish   +4
+buy_score := buy_score + (iq_strong_bull ? 2 : 0)   // IQ 3+ bull streak +2
+// Divergence IQ (weight: 3 pts max — half of IQ Candles)
+buy_score := buy_score + (bull_div       ? 2 : 0)   // Bullish divergence        +2
+buy_score := buy_score + (hidden_bull_div ? 1 : 0)  // Hidden bullish divergence +1
+// RSI
+buy_score := buy_score + (rsi < 50       ? 2 : 0)   // RSI below 50      +2
+buy_score := buy_score + (rsi < 40       ? 1 : 0)   // RSI below 40 bonus+1
+// Bollinger Bands
+buy_score := buy_score + (at_lower_bb    ? 2 : 0)   // At lower BB       +2
+buy_score := buy_score + (cross_mid_up   ? 1 : 0)   // Cross above mid   +1
+buy_score := buy_score + (not bb_squeeze ? 1 : 0)   // BB expanding      +1
+
+// Penalties
+buy_score := buy_score - (iq_bear        ? 5 : 0)   // IQ bearish               -5
+buy_score := buy_score - (div_bear_signal ? 2 : 0)  // Bearish divergence signal -2 (half of IQ penalty)
+buy_score := buy_score - (rsi > rsi_ob   ? 4 : 0)   // RSI overbought            -4
+buy_score := buy_score - (at_upper_bb    ? 2 : 0)   // At upper BB               -2
+
+buy_score := math.max(0, math.min(10, buy_score))
+
+// SELL score
+sell_score = 0
+// IQ Candles (weight: 6 pts max)
+sell_score := sell_score + (iq_flip_bear   ? 4 : 0)
+sell_score := sell_score + (iq_strong_bear ? 2 : 0)
+// Divergence IQ (weight: 3 pts max — half of IQ Candles)
+sell_score := sell_score + (bear_div        ? 2 : 0)  // Bearish divergence        +2
+sell_score := sell_score + (hidden_bear_div ? 1 : 0)  // Hidden bearish divergence +1
+// RSI
+sell_score := sell_score + (rsi > 60       ? 2 : 0)
+sell_score := sell_score + (rsi > rsi_ob   ? 1 : 0)
+// Bollinger Bands
+sell_score := sell_score + (at_upper_bb    ? 2 : 0)
+sell_score := sell_score + (cross_mid_down ? 1 : 0)
+
+// Penalties
+sell_score := sell_score - (iq_bull        ? 5 : 0)
+sell_score := sell_score - (div_bull_signal ? 2 : 0)  // Bullish divergence signal -2
+sell_score := sell_score - (rsi < rsi_os   ? 4 : 0)
+sell_score := sell_score - (at_lower_bb    ? 2 : 0)
+
+sell_score := math.max(0, math.min(10, sell_score))
+
+// ─────────────────────────────────────────────
+//  ENTRY CONDITIONS
+// ─────────────────────────────────────────────
+
+long_condition  = iq_bull and rsi < rsi_max_buy and buy_score >= min_score and strategy.position_size == 0
+exit_condition  = iq_bear and sell_score >= min_score and strategy.position_size > 0
+
+// ─────────────────────────────────────────────
+//  TRAILING STOP LOGIC
+// ─────────────────────────────────────────────
+
+var float entry_price      = na
+var float trail_stop_price = na
+var bool  trail_active     = false
+
+if strategy.position_size > 0
+    entry_price := strategy.position_avg_price
+    float profit_pct = (close - entry_price) / entry_price * 100
+
+    // Activate trailing stop once +5% is hit
+    if profit_pct >= trail_activate and not trail_active
+        trail_active      := true
+        trail_stop_price  := entry_price   // lock to breakeven first
+
+    // Trail 3% below the running high
+    if trail_active
+        float new_stop = close * (1 - trail_percent / 100)
+        trail_stop_price := math.max(trail_stop_price, new_stop)
+else
+    trail_active     := false
+    trail_stop_price := na
+    entry_price      := na
+
+// ─────────────────────────────────────────────
+//  POSITION SIZING  (tiered by account equity)
+//   < $1 000  → 100 %   (deploy full cash)
+//   $1 000 – $1 999  → 50 %
+//   $2 000 – $9 999  → 25 %
+//   ≥ $10 000        → 15 %
+// ─────────────────────────────────────────────
+
+float alloc_pct = strategy.equity < 1000  ? 1.00 :
+                  strategy.equity < 2000  ? 0.50 :
+                  strategy.equity < 10000 ? 0.25 :
+                                            0.15
+float trade_cash = strategy.equity * alloc_pct
+
+// ─────────────────────────────────────────────
+//  EXECUTE TRADES
+// ─────────────────────────────────────────────
+
+if long_condition
+    strategy.entry("Long", strategy.long,
+         qty     = trade_cash / close,
+         comment = "Score:" + str.tostring(buy_score) + " | " + str.tostring(math.round(alloc_pct * 100)) + "%")
+
+if strategy.position_size > 0 and trail_active and close <= trail_stop_price
+    strategy.close("Long", comment="Trail Stop")
+
+if exit_condition
+    strategy.close("Long", comment="IQ Bear Exit")
+
+// ─────────────────────────────────────────────
+//  VISUALS
+// ─────────────────────────────────────────────
+
+// Candle colouring (IQ Candles proxy)
+barcolor(iq_bull ? color.new(color.green, 0) : color.new(color.red, 0))
+
+// Bollinger Bands on chart
+plot(bb_upper, "BB Upper", color=color.new(color.blue, 60), linewidth=1)
+plot(bb_mid,   "BB Mid",   color=color.new(color.blue, 40), linewidth=1)
+plot(bb_lower, "BB Lower", color=color.new(color.blue, 60), linewidth=1)
+fill(plot(bb_upper, display=display.none), plot(bb_lower, display=display.none),
+     color=color.new(color.blue, 92))
+
+// EMA lines (IQ Candles proxy)
+plot(ema_fast, "EMA Fast", color=color.new(color.orange, 30), linewidth=1)
+plot(ema_slow, "EMA Slow", color=color.new(color.purple, 30), linewidth=1)
+
+// Divergence IQ signals on chart
+plotshape(bull_div,       title="Bull Div",        location=location.belowbar, style=shape.triangleup,   color=color.new(color.teal,   20), size=size.tiny)
+plotshape(hidden_bull_div,title="Hidden Bull Div",  location=location.belowbar, style=shape.triangleup,   color=color.new(color.teal,   60), size=size.tiny)
+plotshape(bear_div,       title="Bear Div",         location=location.abovebar, style=shape.triangledown, color=color.new(color.orange, 20), size=size.tiny)
+plotshape(hidden_bear_div,title="Hidden Bear Div",  location=location.abovebar, style=shape.triangledown, color=color.new(color.orange, 60), size=size.tiny)
+
+// Trailing stop line
+plot(trail_active ? trail_stop_price : na, "Trail Stop",
+     color=color.new(color.red, 0), linewidth=2, style=plot.style_linebr)
+
+// Entry/exit signals
+plotshape(long_condition,  title="BUY",  location=location.belowbar,
+     style=shape.labelup,   color=color.new(color.green, 0),
+     textcolor=color.white, text="BUY",  size=size.small)
+
+plotshape(exit_condition,  title="SELL", location=location.abovebar,
+     style=shape.labeldown, color=color.new(color.red, 0),
+     textcolor=color.white, text="SELL", size=size.small)
+
+// Score label (shows on entry bars)
+if long_condition
+    label.new(bar_index, low * 0.999,
+        "Score: " + str.tostring(buy_score) + "/10",
+        color=color.new(color.green, 20),
+        textcolor=color.white,
+        style=label.style_label_up,
+        size=size.small)
+
+// ─────────────────────────────────────────────
+//  INFO TABLE
+// ─────────────────────────────────────────────
+
+var table info = table.new(position.top_right, 2, 7,
+     bgcolor=color.new(color.black, 70), border_width=1)
+
+table.cell(info, 0, 0, "Indicator",    text_color=color.gray,  text_size=size.small)
+table.cell(info, 1, 0, "Status",       text_color=color.gray,  text_size=size.small)
+table.cell(info, 0, 1, "IQ Candles",   text_color=color.white, text_size=size.small)
+table.cell(info, 1, 1, iq_bull ? "BULLISH" : "BEARISH",
+     text_color=iq_bull ? color.green : color.red, text_size=size.small)
+table.cell(info, 0, 2, "Divergence IQ", text_color=color.white, text_size=size.small)
+table.cell(info, 1, 2, div_status,
+     text_color=div_bull_signal and not div_bear_signal ? color.teal :
+                div_bear_signal and not div_bull_signal ? color.orange : color.gray,
+     text_size=size.small)
+table.cell(info, 0, 3, "RSI",          text_color=color.white, text_size=size.small)
+table.cell(info, 1, 3, str.tostring(math.round(rsi, 1)),
+     text_color=rsi > rsi_ob ? color.red : rsi < rsi_os ? color.green : color.white,
+     text_size=size.small)
+table.cell(info, 0, 4, "BB Position",  text_color=color.white, text_size=size.small)
+table.cell(info, 1, 4, at_lower_bb ? "AT LOWER" : at_upper_bb ? "AT UPPER" : "MIDDLE",
+     text_color=at_lower_bb ? color.green : at_upper_bb ? color.red : color.white,
+     text_size=size.small)
+table.cell(info, 0, 5, "Buy Score",    text_color=color.white, text_size=size.small)
+table.cell(info, 1, 5, str.tostring(buy_score) + "/10",
+     text_color=buy_score >= 8 ? color.green : buy_score >= 6 ? color.yellow : color.red,
+     text_size=size.small)
+table.cell(info, 0, 6, "Trail Stop",   text_color=color.white, text_size=size.small)
+table.cell(info, 1, 6, trail_active ? "$" + str.tostring(math.round(trail_stop_price, 2)) : "Inactive",
+     text_color=trail_active ? color.red : color.gray, text_size=size.small)

@@ -1,0 +1,145 @@
+{
+  "strategy_name": "IQ Candles + RSI + Bollinger Bands",
+  "version": "1.0",
+  "timeframe": "5m",
+  "symbol": "BTCUSD",
+  "description": "IQ Candles is the primary signal. RSI and Bollinger Bands are used as confirmation filters. Never fight a strong IQ Candles signal.",
+
+  "indicators": {
+    "iq_candles": {
+      "role": "PRIMARY — most important factor",
+      "description": "IQ Candles colours each candle to show bullish or bearish momentum. A bullish candle (typically green/blue) signals buying pressure. A bearish candle (typically red/orange) signals selling pressure.",
+      "signals": {
+        "bullish": "Candle colour flips to bullish after 1+ bearish candles — momentum shift up",
+        "bearish": "Candle colour flips to bearish after 1+ bullish candles — momentum shift down",
+        "strong_bullish": "3+ consecutive bullish candles — strong uptrend, hold or add",
+        "strong_bearish": "3+ consecutive bearish candles — strong downtrend, stay out or exit"
+      }
+    },
+    "rsi": {
+      "role": "CONFIRMATION — filters out bad entries",
+      "period": 14,
+      "levels": {
+        "overbought": 70,
+        "oversold": 30,
+        "neutral_high": 60,
+        "neutral_low": 40
+      },
+      "signals": {
+        "buy_zone": "RSI below 60 — room to run upward, confirms buy",
+        "sell_zone": "RSI above 60 — stretched, confirms sell or stay out",
+        "oversold_bounce": "RSI crosses back above 30 — potential reversal up",
+        "overbought_reversal": "RSI crosses back below 70 — potential reversal down",
+        "caution": "RSI above 70 — do NOT buy even if IQ Candles is bullish"
+      }
+    },
+    "bollinger_bands": {
+      "role": "CONTEXT — shows where price is relative to fair value",
+      "period": 20,
+      "std_dev": 2,
+      "signals": {
+        "lower_band_touch": "Price at or below lower band — oversold zone, strong buy area if IQ Candles confirms",
+        "upper_band_touch": "Price at or above upper band — overbought zone, strong sell area if IQ Candles confirms",
+        "middle_band_cross_up": "Price crosses above middle band (20 EMA) — bullish momentum building",
+        "middle_band_cross_down": "Price crosses below middle band — bearish momentum building",
+        "band_squeeze": "Bands narrowing — low volatility, big move coming, wait for IQ Candles direction",
+        "band_expansion": "Bands widening — trend is accelerating, ride it with IQ Candles"
+      }
+    }
+  },
+
+  "entry_rules": {
+    "buy": {
+      "required": [
+        "IQ Candles shows bullish candle or bullish flip (MANDATORY — no buy without this)",
+        "RSI is below 70 (not overbought)"
+      ],
+      "strong_buy": [
+        "IQ Candles bullish flip",
+        "RSI below 50 (plenty of upside room)",
+        "Price at or near lower Bollinger Band OR just crossed above middle band",
+        "Bollinger Bands expanding upward"
+      ],
+      "avoid_buy_if": [
+        "RSI above 70",
+        "Price already at or above upper Bollinger Band",
+        "IQ Candles is bearish — do not buy against the candle colour",
+        "3+ consecutive bearish IQ Candles — downtrend, stay out"
+      ]
+    },
+    "sell": {
+      "required": [
+        "IQ Candles shows bearish candle or bearish flip (MANDATORY — no sell signal without this)",
+        "RSI is above 30 (not oversold)"
+      ],
+      "strong_sell": [
+        "IQ Candles bearish flip",
+        "RSI above 60 or crossing down from above 70",
+        "Price at or near upper Bollinger Band OR just crossed below middle band",
+        "Bollinger Bands expanding downward"
+      ],
+      "avoid_sell_if": [
+        "RSI below 30 (oversold — potential bounce)",
+        "Price at lower Bollinger Band — likely to bounce",
+        "IQ Candles still bullish — do not sell into a bullish candle"
+      ]
+    }
+  },
+
+  "risk_management": {
+    "trailing_stop_loss": {
+      "description": "Protects profits once trade is 5% in the green. Once activated, the stop trails to ensure you never go back to red.",
+      "activation_threshold_percent": 5,
+      "rules": [
+        "Do nothing until position reaches +5% profit — stop loss is not active before this",
+        "Once +5% is hit, immediately move stop loss to breakeven (your entry price) — you cannot lose money from this point",
+        "From +5% onward, trail the stop 3% below the highest price reached",
+        "Example: entry $100, high reaches $110 (+10%), stop trails to $106.70 (3% below $110)",
+        "If price pulls back and hits the trailing stop — exit. You still profit.",
+        "If price keeps running — let it run. The stop keeps trailing up automatically.",
+        "Never manually lower the trailing stop once activated"
+      ],
+      "trail_percent": 3,
+      "breakeven_at_percent": 5
+    },
+    "position_sizing": {
+      "advice": "Never risk more than you are comfortable losing before the trailing stop activates (i.e. the first 5% move against you). Size your position so a 5% loss is acceptable."
+    }
+  },
+
+  "signal_scoring": {
+    "description": "Score each potential trade 0-10. Only take trades scoring 6 or above.",
+    "scoring": {
+      "iq_candles_bullish_flip": 4,
+      "iq_candles_strong_trend_3plus": 2,
+      "rsi_below_50": 2,
+      "rsi_below_40": 3,
+      "price_at_lower_band": 2,
+      "price_crossed_middle_band_up": 1,
+      "bollinger_expanding": 1,
+      "iq_candles_bearish_penalty": -5,
+      "rsi_above_70_penalty": -4,
+      "price_at_upper_band_penalty": -2
+    },
+    "thresholds": {
+      "strong_buy": "8-10 points",
+      "buy": "6-7 points",
+      "wait": "4-5 points",
+      "no_trade": "below 4 points"
+    }
+  },
+
+  "daily_brief_template": {
+    "description": "What Claude should tell you each morning (or on demand)",
+    "format": [
+      "Current price and 5m trend direction",
+      "IQ Candles status: bullish / bearish / transitioning",
+      "RSI reading and zone (oversold / neutral / overbought)",
+      "Bollinger Band position (at lower / middle / upper / squeezing)",
+      "Signal score out of 10",
+      "Recommendation: STRONG BUY / BUY / WAIT / SELL / STRONG SELL",
+      "Plain English reason in 2-3 sentences",
+      "Trailing stop status (if in a trade)"
+    ]
+  }
+}
