@@ -430,7 +430,8 @@ app.get('/', (req, res) => res.send('SPY Signal Bot running ✓'));
 
 // One-time webhook registration endpoint
 app.get('/set-webhook', async (req, res) => {
-  const url = `${req.protocol}://${req.get('host')}/webhook`;
+  const host = req.get('host');
+  const url = `https://${host}/webhook`;
   const result = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setWebhook?url=${url}`).then(r=>r.json());
   res.json(result);
 });
