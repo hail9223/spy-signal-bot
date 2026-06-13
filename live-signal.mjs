@@ -27,6 +27,7 @@ async function sendTelegram(text) {
 
 const DIR        = path.dirname(fileURLToPath(import.meta.url));
 const POS_FILE   = path.join(DIR, 'paper-position.json');
+const LOG_FILE   = path.join(DIR, 'signal-log.jsonl');
 const TICKER     = 'SPY';
 const INTERVAL   = '30m';
 const RANGE      = '5d';
@@ -109,6 +110,9 @@ function savePosition(pos){
 function clearPosition(){
   if(fs.existsSync(POS_FILE)) fs.unlinkSync(POS_FILE);
 }
+function appendLog(entry){
+  fs.appendFileSync(LOG_FILE, JSON.stringify(entry) + '\n');
+}
 
 function etNow(){
   // Returns current ET time as a Date adjusted to ET offset
@@ -140,6 +144,41 @@ function isBefore2pmET(now){
 
 const RISK_FREE=0.053;
 const MIN_SCORE=6, MIN_SCORE_FALLBACK=4;
+
+// ── Markov 2.0 regime (stride-sampled, 20-day window) ────────────────────────
+function buildStrideMatrix(states, stride) {
+  const order = ['BULL','SIDEWAYS','BEAR'];
+  const counts = {};
+  order.forEach(a => { counts[a] = {}; order.forEach(b => counts[a][b] = 0); });
+  for (let i = 0; i + stride < states.length; i += stride)
+    counts[states[i]][states[i + stride]]++;
+  const mat = {};
+  order.forEach(row => {
+    const total = order.reduce((s, c) => s + counts[row][c], 0);
+    mat[row] = {};
+    order.forEach(col => mat[row][col] = total > 0 ? counts[row][col] / total : 1/3);
+  });
+  return mat;
+}
+
+async function getMarkovRegime() {
+  try {
+    const daily = await fetchCandles('SPY', '2y', '1d');
+    const closes = daily.map(c => c.close);
+    const WINDOW = 20;
+    const states = [];
+    for (let i = WINDOW; i < closes.length; i++) {
+      const ret = (closes[i] - closes[i - WINDOW]) / closes[i - WINDOW] * 100;
+      states.push(ret >= 5 ? 'BULL' : ret <= -5 ? 'BEAR' : 'SIDEWAYS');
+    }
+    const mat = buildStrideMatrix(states, WINDOW);
+    const cur = states[states.length - 1];
+    const signal = mat[cur]['BULL'] - mat[cur]['BEAR'];
+    return { regime: cur, signal, pBull: mat[cur]['BULL'], pBear: mat[cur]['BEAR'] };
+  } catch {
+    return { regime: 'SIDEWAYS', signal: 0, pBull: 0.33, pBear: 0.33 };
+  }
+}
 const IQ_FAST=9,IQ_SLOW=21,IQ_CONFIRM=3;
 const DIV_RSI_LEN=14,DIV_LB=5;
 const RSI_LEN=14,RSI_OB=70,RSI_OS=30,RSI_MAX_BUY=70;
@@ -236,7 +275,10 @@ const BPY=Math.round(13*252); // 30m bars per year
 
   // ── fetch & compute signal ─────────────────────────────────────────────────
   process.stdout.write(`\n  Fetching ${TICKER} ${INTERVAL} data...\n`);
-  const candles = await fetchCandles(TICKER, RANGE, INTERVAL);
+  const [candles, markov] = await Promise.all([
+    fetchCandles(TICKER, RANGE, INTERVAL),
+    getMarkovRegime(),
+  ]);
   const closes  = candles.map(c=>c.close);
   const n       = closes.length;
   const now     = new Date();
@@ -284,6 +326,9 @@ const BPY=Math.round(13*252); // 30m bars per year
   buyScore-=r>RSI_OB?4:0; buyScore-=atUpperBB?2:0;
   buyScore=Math.max(0,Math.min(10,buyScore));
 
+  // Markov 2.0 buy contribution (20% weight): BULL=10, SIDEWAYS=5, BEAR=0
+  const markovBuyPts  = markov.regime==='BULL' ? 10 : markov.regime==='BEAR' ? 0 : 5;
+
   let sellScore=0;
   sellScore+=iqFlipBear?4:0; sellScore+=iqStrongBear?2:0;
   sellScore+=bearDiv?2:0; sellScore+=hiddenBearDiv?1:0;
@@ -292,6 +337,15 @@ const BPY=Math.round(13*252); // 30m bars per year
   sellScore-=iqBull?5:0; sellScore-=divBullSig?2:0;
   sellScore-=r<RSI_OS?4:0; sellScore-=atLowerBB?2:0;
   sellScore=Math.max(0,Math.min(10,sellScore));
+
+  // Markov 2.0 sell contribution (20% weight): BEAR=10, SIDEWAYS=5, BULL=0
+  const markovSellPts = markov.regime==='BEAR' ? 10 : markov.regime==='BULL' ? 0 : 5;
+
+  // Blend: 80% existing indicators + 20% Markov 2.0
+  const buyScoreRaw  = buyScore;
+  const sellScoreRaw = sellScore;
+  buyScore  = Math.round(buyScore  * 0.8 + markovBuyPts  * 0.2);
+  sellScore = Math.round(sellScore * 0.8 + markovSellPts * 0.2);
 
   const beforeCutoff=isBefore2pmET(now);
   const iv=histVol(closes,i,BPY);
@@ -325,10 +379,13 @@ const BPY=Math.round(13*252); // 30m bars per year
   console.log(`  RSI        : ${isNaN(r)?'n/a':r.toFixed(1)}  ${r>RSI_OB?'(overbought)':r<RSI_OS?'(oversold)':'(neutral)'}`);
   console.log(`  BB position: ${atLowerBB?'At LOWER band':atUpperBB?'At UPPER band':c>bbM?'Above mid':'Below mid'}`);
   console.log(`  Divergence : ${divBullSig?'BULL DIV ↑':divBearSig?'BEAR DIV ↓':'None'}`);
-  console.log(`  Buy score  : ${buyScore}/10   Sell score: ${sellScore}/10`);
+  console.log(`  Markov 2.0 : ${markov.regime} regime  |  P(bull)=${markov.pBull.toFixed(2)}  P(bear)=${markov.pBear.toFixed(2)}  sig=${markov.signal>=0?'+':''}${markov.signal.toFixed(3)}`);
+  console.log(`  Buy score  : ${buyScoreRaw}/10 raw → ${buyScore}/10 blended   Sell: ${sellScoreRaw}/10 raw → ${sellScore}/10 blended  (80% indicators + 20% Markov)`);
   console.log(`${'─'.repeat(62)}`);
 
   // ── signal recommendation ─────────────────────────────────────────────────
+  const pos = loadPosition();
+  let alerted = false;
   if(!direction){
     console.log(`  SIGNAL     : ⏸  NO TRADE — score too low`);
     console.log(`               Minimum needed: ${MIN_SCORE_FALLBACK} (fallback) / ${MIN_SCORE} (primary)`);
@@ -372,7 +429,7 @@ const BPY=Math.round(13*252); // 30m bars per year
         `📊 <b>SPY 0DTE SIGNAL — ${dateStr} ${timeStr} ET</b>`,
         ``,
         `🟢 <b>${direction} ${quality}</b>  (score ${score}/10)`,
-        `Strike: <b>$${strike.toFixed(2)}</b>  |  IV: ${(iv*100).toFixed(0)}%`,
+        `Strike: <b>$${strike.toFixed(2)}</b>  |  IV: ${(iv*100).toFixed(0)}%  |  Markov: ${markov.regime}`,
         `Premium: ~<b>$${premium.toFixed(2)}</b>/contract`,
         ``,
         `<b>Your trade ($${acct} account):</b>`,
@@ -385,12 +442,23 @@ const BPY=Math.round(13*252); // 30m bars per year
         `Run: node live-signal.mjs enter ${acct}`,
       ].join('\n');
       await sendTelegram(msg);
+      alerted = true;
       console.log(`\n  📱 Signal sent to Telegram.`);
     }
   }
 
+  // ── log scan result ───────────────────────────────────────────────────────
+  if(action==='check'){
+    appendLog({
+      time: now.toISOString(),
+      price: +c.toFixed(2),
+      buyScore, sellScore,
+      signal: signalType,
+      alerted,
+    });
+  }
+
   // ── open position status ──────────────────────────────────────────────────
-  const pos=loadPosition();
   if(pos){
     const currentPremium=pos.type==='CALL'?bsCall(c,pos.strike,T,RISK_FREE,iv):bsPut(c,pos.strike,T,RISK_FREE,iv);
     const remainContracts=pos.contracts-(pos.scaledContracts||0);
