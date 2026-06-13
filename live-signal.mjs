@@ -137,9 +137,14 @@ function isMarketOpen(now){
   return mins>=13*60+30 && mins<20*60; // 9:30am-4pm ET in UTC (EDT offset -4)
 }
 
-function isBefore2pmET(now){
+function isAfter10amET(now){
   const h=now.getUTCHours(), m=now.getUTCMinutes();
-  return (h*60+m) < 18*60; // 2pm ET = 18:00 UTC
+  return (h*60+m) >= 14*60; // 10am ET = 14:00 UTC
+}
+
+function isBefore1pmET(now){
+  const h=now.getUTCHours(), m=now.getUTCMinutes();
+  return (h*60+m) < 17*60; // 1pm ET = 17:00 UTC
 }
 
 const RISK_FREE=0.053;
@@ -347,7 +352,7 @@ const BPY=Math.round(13*252); // 30m bars per year
   buyScore  = Math.round(buyScore  * 0.8 + markovBuyPts  * 0.2);
   sellScore = Math.round(sellScore * 0.8 + markovSellPts * 0.2);
 
-  const beforeCutoff=isBefore2pmET(now);
+  const beforeCutoff=isAfter10amET(now) && isBefore1pmET(now);
   const iv=histVol(closes,i,BPY);
   const T=timeToExpiry(now);
   const expiryMins=Math.round(T*365*24*60);
@@ -390,7 +395,7 @@ const BPY=Math.round(13*252); // 30m bars per year
     console.log(`  SIGNAL     : ⏸  NO TRADE — score too low`);
     console.log(`               Minimum needed: ${MIN_SCORE_FALLBACK} (fallback) / ${MIN_SCORE} (primary)`);
   } else if(!beforeCutoff){
-    console.log(`  SIGNAL     : ⚠  ${direction} signal (score ${score}) but AFTER 2pm ET cutoff`);
+    console.log(`  SIGNAL     : ⚠  ${direction} signal (score ${score}) but outside 10am–1pm ET window`);
     console.log(`               Too late to enter 0DTE — skip this one`);
   } else {
     const quality=signalType.includes('PRIMARY')?'★ PRIMARY':'◎ FALLBACK';
@@ -438,7 +443,7 @@ const BPY=Math.round(13*252); // 30m bars per year
         `<b>Scale-out targets:</b>`,
         scaleLines,
         ``,
-        `⏰ Expires 4pm ET — enter before 2pm`,
+        `⏰ Expires 4pm ET — enter between 10am–1pm ET`,
         `Run: node live-signal.mjs enter ${acct}`,
       ].join('\n');
       await sendTelegram(msg);
@@ -501,7 +506,7 @@ const BPY=Math.round(13*252); // 30m bars per year
       console.log('\n  Cannot enter — no valid signal.\n'); return;
     }
     if(!beforeCutoff){
-      console.log('\n  Cannot enter — past 2pm ET cutoff.\n'); return;
+      console.log('\n  Cannot enter — outside 10am–1pm ET window.\n'); return;
     }
     if(pos){
       console.log('\n  Already have an open position. Run "exit" first.\n'); return;

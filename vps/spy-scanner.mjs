@@ -56,12 +56,12 @@ function isMarketHours(now) {
   const day = now.getUTCDay();
   if (day === 0 || day === 6) return false;
   const mins = now.getUTCHours() * 60 + now.getUTCMinutes();
-  return mins >= 13 * 60 + 30 && mins <= 18 * 60; // 9:30am-2pm ET (UTC-4)
+  return mins >= 14 * 60 && mins < 17 * 60; // 10am-1pm ET (UTC-4)
 }
 
-function isBefore2pmET(now) {
+function isBefore1pmET(now) {
   const mins = now.getUTCHours() * 60 + now.getUTCMinutes();
-  return mins < 18 * 60;
+  return mins < 17 * 60; // 1pm ET = 17:00 UTC
 }
 
 function timeToExpiry(now) {
@@ -191,7 +191,7 @@ async function getMarkovRegime() {
     process.exit(0);
   }
 
-  if (!isBefore2pmET(now)) {
+  if (!isBefore1pmET(now)) {
     console.log('Signal detected but past 2pm ET cutoff');
     process.exit(0);
   }
@@ -221,7 +221,7 @@ async function getMarkovRegime() {
     `Scale-out targets:`,
     scaleLines,
     ``,
-    `Expires 4pm ET - enter before 2pm`,
+    `Expires 4pm ET - enter between 10am-1pm ET`,
   ].join('\n');
 
   await sendTelegram(msg);
