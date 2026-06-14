@@ -86,6 +86,11 @@ function bsPut(S,K,T,r,v){if(T<=0)return Math.max(K-S,0);const d1=(Math.log(S/K)
 function histVol(closes,i,bpy){const n=Math.max(2,Math.round(bpy/252));if(i<n+1)return 0.20;let s=0;for(let j=i-n;j<i;j++){const r=Math.log(closes[j+1]/closes[j]);s+=r*r;}return Math.sqrt((s/n)*bpy);}
 function allocPct(equity){if(equity<2000)return 0.50;if(equity<4000)return 0.40;if(equity<10000)return 0.25;if(equity<20000)return 0.10;return 0.08;}
 const MAX_DEPLOY=4000; // 8% of $50k account cap
+function getCash(equity, score){
+  // High-conviction override: score 9+ at max tier -> 10% or $6k, whichever is lower
+  if(equity>=20000 && score>=9) return Math.min(equity*0.10, 6000);
+  return Math.min(equity*allocPct(equity), MAX_DEPLOY);
+}
 
 const IQ_FAST=9,IQ_SLOW=21,IQ_CONFIRM=3,DIV_RSI_LEN=14,DIV_LB=5;
 const RSI_LEN=14,RSI_OB=70,RSI_OS=30,RSI_MAX_BUY=70;
@@ -217,7 +222,7 @@ async function getMarkovRegime() {
   const iv=histVol(closes,i,BPY),T=timeToExpiry(now);
   const strike=Math.round(c*20)/20;
   const premium=direction==='CALL'?bsCall(c,strike,T,RISK_FREE,iv)*100:bsPut(c,strike,T,RISK_FREE,iv)*100;
-  const acct=600,pct=allocPct(acct),cash=Math.min(acct*pct,MAX_DEPLOY);
+  const acct=600,pct=allocPct(acct),cash=getCash(acct,score);
   const qty=Math.min(50,Math.max(1,Math.floor(cash/premium)));
   const deployed=qty*premium;
   const quality=signalType.includes('PRIMARY')?'PRIMARY':'FALLBACK';

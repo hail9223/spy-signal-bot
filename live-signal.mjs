@@ -100,6 +100,10 @@ function allocPct(equity){
   return 0.08;
 }
 const MAX_DEPLOY=4000; // 8% of $50k account cap
+function getCash(equity, score){
+  if(equity>=20000 && score>=9) return Math.min(equity*0.10, 6000);
+  return Math.min(equity*allocPct(equity), MAX_DEPLOY);
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function loadPosition(){
@@ -412,7 +416,7 @@ const BPY=Math.round(13*252); // 30m bars per year
     console.log(`  POSITION SIZING:`);
     sizes.forEach(acct=>{
       const pct=allocPct(acct);
-      const cash=Math.min(acct*pct,MAX_DEPLOY);
+      const cash=getCash(acct,score);
       const qty=Math.min(50,Math.max(1,Math.floor(cash/premium)));
       const deployed=qty*premium;
       console.log(`    $${acct.toLocaleString()} account → ${(pct*100).toFixed(0)}% = $${cash.toFixed(0)} → ${qty} contracts @ $${premium.toFixed(2)} = $${deployed.toFixed(2)} deployed`);
@@ -428,7 +432,7 @@ const BPY=Math.round(13*252); // 30m bars per year
     if(!pos && action==='check'){
       const acct=acctArg>0?acctArg:600;
       const pct=allocPct(acct);
-      const cash=Math.min(acct*pct,MAX_DEPLOY);
+      const cash=getCash(acct,score);
       const qty=Math.min(50,Math.max(1,Math.floor(cash/premium)));
       const deployed=qty*premium;
       const scaleLines=[1,2,3,4,5].map(l=>`  +${l*10}% → sell when premium hits $${(premium*(1+l*0.10)).toFixed(2)}`).join('\n');
@@ -515,7 +519,7 @@ const BPY=Math.round(13*252); // 30m bars per year
     }
     const acct=acctArg>0?acctArg:600;
     const pct=allocPct(acct);
-    const cash=Math.min(acct*pct,MAX_DEPLOY);
+    const cash=getCash(acct,score);
     const qty=Math.min(50,Math.max(1,Math.floor(cash/premium)));
     const deployed=qty*premium;
     const newPos={
