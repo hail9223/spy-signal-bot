@@ -85,7 +85,7 @@ function bsCall(S,K,T,r,v){if(T<=0)return Math.max(S-K,0);const d1=(Math.log(S/K
 function bsPut(S,K,T,r,v){if(T<=0)return Math.max(K-S,0);const d1=(Math.log(S/K)+(r+0.5*v*v)*T)/(v*Math.sqrt(T)),d2=d1-v*Math.sqrt(T);return K*Math.exp(-r*T)*normCDF(-d2)-S*normCDF(-d1);}
 function histVol(closes,i,bpy){const n=Math.max(2,Math.round(bpy/252));if(i<n+1)return 0.20;let s=0;for(let j=i-n;j<i;j++){const r=Math.log(closes[j+1]/closes[j]);s+=r*r;}return Math.sqrt((s/n)*bpy);}
 function allocPct(equity){if(equity<2000)return 0.50;if(equity<4000)return 0.40;if(equity<10000)return 0.25;if(equity<20000)return 0.10;return 0.08;}
-const MAX_DEPLOY=50000;
+const MAX_DEPLOY=4000; // 8% of $50k account cap
 
 const IQ_FAST=9,IQ_SLOW=21,IQ_CONFIRM=3,DIV_RSI_LEN=14,DIV_LB=5;
 const RSI_LEN=14,RSI_OB=70,RSI_OS=30,RSI_MAX_BUY=70;

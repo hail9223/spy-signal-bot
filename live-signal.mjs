@@ -99,7 +99,7 @@ function allocPct(equity){
   if(equity<20000)return 0.10;
   return 0.08;
 }
-const MAX_DEPLOY=50000;
+const MAX_DEPLOY=4000; // 8% of $50k account cap
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function loadPosition(){
