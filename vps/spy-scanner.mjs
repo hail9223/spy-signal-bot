@@ -64,6 +64,14 @@ function isBefore1pmET(now) {
   return mins < 17 * 60; // 1pm ET = 17:00 UTC
 }
 
+function is3pmExitWindow(now) {
+  const day = now.getUTCDay();
+  if (day === 0 || day === 6) return false;
+  const mins = now.getUTCHours() * 60 + now.getUTCMinutes();
+  // 3pm ET = 19:00 UTC; fire between 19:00-19:05 to catch the cron tick
+  return mins >= 19 * 60 && mins < 19 * 60 + 5;
+}
+
 function timeToExpiry(now) {
   const expiry = new Date(now);
   expiry.setUTCHours(20, 0, 0, 0);
@@ -119,6 +127,15 @@ async function getMarkovRegime() {
 
 (async () => {
   const now = new Date();
+
+  // 3pm ET exit reminder — fires before signal scan check
+  if (is3pmExitWindow(now)) {
+    await sendTelegram(
+      '⏰ 3PM ET EXIT REMINDER\n\nClose your SPY 0DTE position NOW.\nDo not hold past 3pm — strategy exits here.'
+    );
+    console.log('3pm exit reminder sent');
+    process.exit(0);
+  }
 
   if (!isMarketHours(now)) {
     console.log('Outside market hours — skipping');
@@ -192,7 +209,7 @@ async function getMarkovRegime() {
   }
 
   if (!isBefore1pmET(now)) {
-    console.log('Signal detected but past 2pm ET cutoff');
+    console.log('Signal detected but past 1pm ET cutoff');
     process.exit(0);
   }
 
@@ -221,7 +238,7 @@ async function getMarkovRegime() {
     `Scale-out targets:`,
     scaleLines,
     ``,
-    `Expires 4pm ET - enter between 10am-1pm ET`,
+    `Enter 10am-1pm ET | EXIT BY 3pm ET (do not hold to expiry)`,
   ].join('\n');
 
   await sendTelegram(msg);

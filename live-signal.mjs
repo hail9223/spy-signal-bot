@@ -443,7 +443,7 @@ const BPY=Math.round(13*252); // 30m bars per year
         `<b>Scale-out targets:</b>`,
         scaleLines,
         ``,
-        `⏰ Expires 4pm ET — enter between 10am–1pm ET`,
+        `⏰ Expires 4pm ET — enter 10am–1pm ET | exit by 3pm ET`,
         `Run: node live-signal.mjs enter ${acct}`,
       ].join('\n');
       await sendTelegram(msg);
