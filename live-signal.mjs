@@ -94,10 +94,12 @@ function highestN(arr,i,n){let hi=-Infinity;for(let j=Math.max(0,i-n+1);j<=i;j++
 // ── Position sizing ───────────────────────────────────────────────────────────
 function allocPct(equity){
   if(equity< 2000)return 0.50;
-  if(equity< 4000)return 0.60;
+  if(equity< 4000)return 0.40;
   if(equity<10000)return 0.25;
-  return 0.10;
+  if(equity<20000)return 0.10;
+  return 0.08;
 }
+const MAX_DEPLOY=50000;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function loadPosition(){
@@ -410,7 +412,7 @@ const BPY=Math.round(13*252); // 30m bars per year
     console.log(`  POSITION SIZING:`);
     sizes.forEach(acct=>{
       const pct=allocPct(acct);
-      const cash=acct*pct;
+      const cash=Math.min(acct*pct,MAX_DEPLOY);
       const qty=Math.min(50,Math.max(1,Math.floor(cash/premium)));
       const deployed=qty*premium;
       console.log(`    $${acct.toLocaleString()} account → ${(pct*100).toFixed(0)}% = $${cash.toFixed(0)} → ${qty} contracts @ $${premium.toFixed(2)} = $${deployed.toFixed(2)} deployed`);
@@ -426,7 +428,7 @@ const BPY=Math.round(13*252); // 30m bars per year
     if(!pos && action==='check'){
       const acct=acctArg>0?acctArg:600;
       const pct=allocPct(acct);
-      const cash=acct*pct;
+      const cash=Math.min(acct*pct,MAX_DEPLOY);
       const qty=Math.min(50,Math.max(1,Math.floor(cash/premium)));
       const deployed=qty*premium;
       const scaleLines=[1,2,3,4,5].map(l=>`  +${l*10}% → sell when premium hits $${(premium*(1+l*0.10)).toFixed(2)}`).join('\n');
@@ -513,7 +515,7 @@ const BPY=Math.round(13*252); // 30m bars per year
     }
     const acct=acctArg>0?acctArg:600;
     const pct=allocPct(acct);
-    const cash=acct*pct;
+    const cash=Math.min(acct*pct,MAX_DEPLOY);
     const qty=Math.min(50,Math.max(1,Math.floor(cash/premium)));
     const deployed=qty*premium;
     const newPos={

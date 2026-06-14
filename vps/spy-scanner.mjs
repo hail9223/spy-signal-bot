@@ -84,7 +84,8 @@ function normCDF(x){return 0.5*(1+erf(x/Math.sqrt(2)));}
 function bsCall(S,K,T,r,v){if(T<=0)return Math.max(S-K,0);const d1=(Math.log(S/K)+(r+0.5*v*v)*T)/(v*Math.sqrt(T)),d2=d1-v*Math.sqrt(T);return S*normCDF(d1)-K*Math.exp(-r*T)*normCDF(d2);}
 function bsPut(S,K,T,r,v){if(T<=0)return Math.max(K-S,0);const d1=(Math.log(S/K)+(r+0.5*v*v)*T)/(v*Math.sqrt(T)),d2=d1-v*Math.sqrt(T);return K*Math.exp(-r*T)*normCDF(-d2)-S*normCDF(-d1);}
 function histVol(closes,i,bpy){const n=Math.max(2,Math.round(bpy/252));if(i<n+1)return 0.20;let s=0;for(let j=i-n;j<i;j++){const r=Math.log(closes[j+1]/closes[j]);s+=r*r;}return Math.sqrt((s/n)*bpy);}
-function allocPct(equity){if(equity<2000)return 0.50;if(equity<4000)return 0.60;if(equity<10000)return 0.25;return 0.10;}
+function allocPct(equity){if(equity<2000)return 0.50;if(equity<4000)return 0.40;if(equity<10000)return 0.25;if(equity<20000)return 0.10;return 0.08;}
+const MAX_DEPLOY=50000;
 
 const IQ_FAST=9,IQ_SLOW=21,IQ_CONFIRM=3,DIV_RSI_LEN=14,DIV_LB=5;
 const RSI_LEN=14,RSI_OB=70,RSI_OS=30,RSI_MAX_BUY=70;
@@ -216,7 +217,7 @@ async function getMarkovRegime() {
   const iv=histVol(closes,i,BPY),T=timeToExpiry(now);
   const strike=Math.round(c*20)/20;
   const premium=direction==='CALL'?bsCall(c,strike,T,RISK_FREE,iv)*100:bsPut(c,strike,T,RISK_FREE,iv)*100;
-  const acct=600,pct=allocPct(acct),cash=acct*pct;
+  const acct=600,pct=allocPct(acct),cash=Math.min(acct*pct,MAX_DEPLOY);
   const qty=Math.min(50,Math.max(1,Math.floor(cash/premium)));
   const deployed=qty*premium;
   const quality=signalType.includes('PRIMARY')?'PRIMARY':'FALLBACK';
