@@ -1,5 +1,5 @@
 /**
- * Morning Brief — Top 5 runners under $15
+ * Morning Brief — Top 3 runners under $15
  * Calls Claude API with web search, sends to Telegram
  */
 
@@ -48,7 +48,7 @@ async function main() {
         role: 'user',
         content: `Today is ${today}. You are a stock market morning brief assistant.
 
-Search the web for today's top 5 stock runners under $15 with:
+Search the web for today's top 3 stock runners under $15 with:
 - A clear news catalyst (earnings, FDA approval, acquisition, contract, partnership, etc.)
 - Short squeeze potential (high short interest, thin float, or heavy volume)
 - Premarket momentum or gap-up activity
@@ -64,7 +64,7 @@ Format your response EXACTLY like this and nothing else:
 
 🌅 MORNING BRIEF — ${today}
 
-📋 TOP 5 RUNNERS UNDER $15
+📋 TOP 3 RUNNERS UNDER $15
 Squeeze Potential + News Catalyst
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
