@@ -137,7 +137,8 @@ If none qualify, respond with just: "${isFinal ? 'EARNINGS FINAL ALERT' : 'EARNI
       }]
     });
 
-    const text = response.content.find(b => b.type === 'text')?.text;
+    const textBlocks = response.content.filter(b => b.type === 'text');
+    const text = textBlocks[textBlocks.length - 1]?.text;
     if (text) {
       const result = await sendTelegram(text);
       if (result.ok) {
