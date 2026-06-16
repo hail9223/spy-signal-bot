@@ -229,7 +229,22 @@ async function getMarkovRegime() {
 
   const timeStr=now.toLocaleTimeString('en-US',{timeZone:'America/New_York',hour:'2-digit',minute:'2-digit'});
   const dateStr=now.toLocaleDateString('en-US',{timeZone:'America/New_York',weekday:'short',month:'short',day:'numeric'});
-  const scaleLines=[1,2,3,4,5].map(l=>`  +${l*10}% -> sell when premium hits $${(premium*(1+l*0.10)).toFixed(2)}`).join('\n');
+
+  const smallSize = qty < 10;
+  const scaleTargets = smallSize
+    ? [
+        { pct: 20, qty: Math.ceil(qty/2), label: 'Sell HALF' },
+        { pct: 50, qty: Math.floor(qty/2), label: 'Sell REST' },
+      ]
+    : [
+        { pct: 10, qty: Math.round(qty*0.25), label: 'Sell 25%' },
+        { pct: 20, qty: Math.round(qty*0.25), label: 'Sell 25%' },
+        { pct: 30, qty: Math.round(qty*0.25), label: 'Sell 25%' },
+        { pct: 50, qty: Math.round(qty*0.25), label: 'Sell REST' },
+      ];
+  const scaleLines = scaleTargets.map(t =>
+    `  +${t.pct}% -> $${(premium*(1+t.pct/100)).toFixed(2)}/contract — ${t.label} (${t.qty} contracts)`
+  ).join('\n');
 
   const msg=[
     `SPY 0DTE SIGNAL - ${dateStr} ${timeStr} ET`,
@@ -249,4 +264,48 @@ async function getMarkovRegime() {
 
   await sendTelegram(msg);
   console.log('Signal sent to Telegram');
+
+  // Monitor premium and send scale-out alerts
+  const half = Math.ceil(qty/2);
+  const rest = qty - half;
+  const targets = smallSize
+    ? [{ pct: 20, qty: half, label: 'SELL HALF', fired: false },
+       { pct: 50, qty: rest, label: 'SELL REST', fired: false }]
+    : [{ pct: 10, qty: Math.round(qty*0.25), label: 'SELL 25%', fired: false },
+       { pct: 20, qty: Math.round(qty*0.25), label: 'SELL 25%', fired: false },
+       { pct: 30, qty: Math.round(qty*0.25), label: 'SELL 25%', fired: false },
+       { pct: 50, qty: Math.round(qty*0.25), label: 'SELL REST', fired: false }];
+
+  const entryPremium = premium;
+  let allFired = false;
+
+  const monitor = setInterval(async () => {
+    const nowCheck = new Date();
+    const minsUTC = nowCheck.getUTCHours()*60 + nowCheck.getUTCMinutes();
+    // Stop at 3pm ET (19:00 UTC)
+    if (minsUTC >= 19*60 || allFired) { clearInterval(monitor); return; }
+
+    try {
+      const latest = await fetchCandles('SPY', '1d', '1m');
+      if (!latest.length) return;
+      const curPrice = latest[latest.length-1].close;
+      const T2 = timeToExpiry(nowCheck);
+      const iv2 = histVol(closes, i, BPY);
+      const curPremium = direction==='CALL'
+        ? bsCall(curPrice, strike, T2, RISK_FREE, iv2)*100
+        : bsPut(curPrice, strike, T2, RISK_FREE, iv2)*100;
+      const gain = (curPremium - entryPremium) / entryPremium * 100;
+
+      for (const t of targets) {
+        if (!t.fired && gain >= t.pct) {
+          t.fired = true;
+          const alertTime = nowCheck.toLocaleTimeString('en-US',{timeZone:'America/New_York',hour:'2-digit',minute:'2-digit'});
+          await sendTelegram(
+            `SCALE OUT ALERT - ${alertTime} ET\n\n${t.label} — ${t.qty} contracts\nPremium: ~$${curPremium.toFixed(2)} (+${gain.toFixed(0)}%)\n\nOriginal entry: $${entryPremium.toFixed(2)}`
+          );
+        }
+      }
+      if (targets.every(t => t.fired)) { allFired = true; clearInterval(monitor); }
+    } catch(e) { /* silent fail */ }
+  }, 3 * 60 * 1000); // check every 3 minutes
 })();
