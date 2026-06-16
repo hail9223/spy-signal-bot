@@ -231,16 +231,17 @@ async function getMarkovRegime() {
   const dateStr=now.toLocaleDateString('en-US',{timeZone:'America/New_York',weekday:'short',month:'short',day:'numeric'});
 
   const smallSize = qty < 10;
+  const q25 = Math.max(1, Math.round(qty*0.25));
   const scaleTargets = smallSize
     ? [
-        { pct: 20, qty: Math.ceil(qty/2), label: 'Sell HALF' },
-        { pct: 50, qty: Math.floor(qty/2), label: 'Sell REST' },
+        { pct: 20, qty: q25, label: 'Sell 25%' },
+        { pct: 50, qty: q25, label: 'Sell 25% — ride rest to 3pm' },
       ]
     : [
         { pct: 10, qty: Math.round(qty*0.25), label: 'Sell 25%' },
         { pct: 20, qty: Math.round(qty*0.25), label: 'Sell 25%' },
         { pct: 30, qty: Math.round(qty*0.25), label: 'Sell 25%' },
-        { pct: 50, qty: Math.round(qty*0.25), label: 'Sell REST' },
+        { pct: 50, qty: Math.round(qty*0.25), label: 'Sell 25% — ride rest to 3pm' },
       ];
   const scaleLines = scaleTargets.map(t =>
     `  +${t.pct}% -> $${(premium*(1+t.pct/100)).toFixed(2)}/contract — ${t.label} (${t.qty} contracts)`
@@ -266,15 +267,13 @@ async function getMarkovRegime() {
   console.log('Signal sent to Telegram');
 
   // Monitor premium and send scale-out alerts
-  const half = Math.ceil(qty/2);
-  const rest = qty - half;
   const targets = smallSize
-    ? [{ pct: 20, qty: half, label: 'SELL HALF', fired: false },
-       { pct: 50, qty: rest, label: 'SELL REST', fired: false }]
+    ? [{ pct: 20, qty: q25, label: 'SELL 25%', fired: false },
+       { pct: 50, qty: q25, label: 'SELL 25% — ride rest to 3pm', fired: false }]
     : [{ pct: 10, qty: Math.round(qty*0.25), label: 'SELL 25%', fired: false },
        { pct: 20, qty: Math.round(qty*0.25), label: 'SELL 25%', fired: false },
        { pct: 30, qty: Math.round(qty*0.25), label: 'SELL 25%', fired: false },
-       { pct: 50, qty: Math.round(qty*0.25), label: 'SELL REST', fired: false }];
+       { pct: 50, qty: Math.round(qty*0.25), label: 'SELL 25% — ride rest to 3pm', fired: false }];
 
   const entryPremium = premium;
   let allFired = false;
